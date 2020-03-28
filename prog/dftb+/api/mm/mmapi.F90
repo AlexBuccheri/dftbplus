@@ -511,7 +511,8 @@ contains
   end subroutine TDftbPlus_checkSpeciesNames
 
   !> Set species and all variables/data dependent on it   
-  subroutine TDftbPlus_setSpeciesAndDependents(this, inputSpeciesNames, inputSpecies)
+  subroutine TDftbPlus_setSpeciesAndDependents(this, inputSpeciesNames, inputSpecies, &
+       &  initialCharges, qRef)
     !> Instance
     class(TDftbPlus), intent(inout) :: this
     
@@ -520,10 +521,20 @@ contains
     
     !> Labels of atomic species (nSpecies)
     character(len=*), intent(in) :: inputSpeciesNames(:)
+
+    !> Atom-resolved atomic charges 
+    real(dp),   optional, intent(in) :: initialCharges(:)
+    
+    !> reference neutral atomic occupations                                                                                  
+    real(dp),   optional, intent(in) :: qRef(:,:,:)
     
     call this%checkInit()
     call this%checkSpeciesNames(inputSpeciesNames)
     call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
+    Add if statements
+    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, initialCharges=initialCharges)
+    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, qRef=qRef)
+    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, initialCharges=initialCharges, qRef=qRef)
 
   end subroutine TDftbPlus_setSpeciesAndDependents
 

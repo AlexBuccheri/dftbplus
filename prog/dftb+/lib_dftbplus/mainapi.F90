@@ -256,14 +256,19 @@ contains
   !> When order of atoms changes, update arrays containing atom type indices,
   !> and all subsequent dependencies.
   !  Updated data returned via module use statements
-  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies)
+  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies, initialCharges, qRef)
     
     !> dftb+ environment 
     type(TEnvironment),   intent(in) :: env
     !> types of the atoms (nAllAtom) 
     integer,              intent(in) :: inputSpecies(:)
+    !> atom-resolved atomic charges 
+    real(dp),   optional, intent(in) :: initialCharges(:)
+    !> reference neutral atomic occupations                                                                                  
+    real(dp),   optional, intent(in) :: qRef(:,:,:)
+    
     !> Dummy arguments. Won't be used if not allocated
-    real(dp), allocatable :: initialCharges(:), initialSpins(:,:)
+    real(dp), allocatable :: emptyInitialCharges(:), emptyInitialSpins(:,:)
     type(TWrappedInt1), allocatable :: customOccAtoms(:)
     real(dp), allocatable :: customOccFillings(:,:)
 
@@ -278,20 +283,36 @@ contains
     !Used in partial charge initialisation
     call setEquivalencyRelations(species0, sccCalc, orb, onSiteElements, iEqOrbitals, &
          & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, nIneqOrb, nMixElements)
+    
 #:if WITH_SCALAPACK
     call updateBLACSDecomposition(env, denseDesc)
     call reallocateHSArrays(env, denseDesc, HSqrCplx, SSqrCplx, eigVecsCplx, HSqrReal, &
          & SSqrReal, eigVecsReal)
 #:endif
-    !If atomic order changes, partial charges need to be initialised,                                                   
-    !else wrong charge will be associated with each atom                                                                
-    call initializeReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
-         & customOccFillings, q0)
-    call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
-    call initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, &
-         & nMixElements, initialSpins, initialCharges, nrChrg, q0, qInput, qOutput, &
-         & qInpRed, qOutRed, qDiffRed, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
     
+    !If atomic order changes, partial charges need to be initialised,                                                   
+    !else wrong charge will be associated with each atom
+    if(present(qRef)) then
+       @:ASSERT(size(q0) == size(qRef))
+       q0 = qRef
+    else
+       call initializeReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
+            & customOccFillings, q0)
+    endif
+
+    call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
+    
+    if(present(initialCharges))then
+       @:ASSERT(size(initialCharges) == nAtom)
+       call initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, &
+            & nMixElements, emptyInitialSpins, initialCharges, nrChrg, q0, qInput, qOutput, &
+            & qInpRed, qOutRed, qDiffRed, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+    else
+       call initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, &
+            & nMixElements, emptyInitialSpins, emptyInitialCharges, nrChrg, q0, qInput, qOutput, &
+            & qInpRed, qOutRed, qDiffRed, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+    endif
+       
   end subroutine updateDataDependentOnSpeciesOrdering
 
 

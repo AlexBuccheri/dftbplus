@@ -1694,7 +1694,7 @@ contains
     referenceN0(:,:) = input%slako%skOcc(1:orb%mShell, :)                                                                    
     nrChrg = input%ctrl%nrChrg                                                                                               
     nrSpinPol = input%ctrl%nrSpinPol                                                                                         
-    call initializeReferenceCharges(species0, referenceN0, orb, input%ctrl%customOccAtoms, &
+    call setReferenceCharges(species0, referenceN0, orb, input%ctrl%customOccAtoms, &
          & input%ctrl%customOccFillings, q0)
     call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
 
@@ -2242,10 +2242,21 @@ contains
     tWriteChrgAscii = input%ctrl%tWriteChrgAscii
     tSkipChrgChecksum = input%ctrl%tSkipChrgChecksum .or. tNegf
 
-    call initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, &
-         & nMixElements, input%ctrl%initialSpins, input%ctrl%initialCharges, nrChrg, &
-         & q0, qInput, qOutput, qInpRed, qOutRed, qDiffRed, qBlockIn, qBlockOut, &
-         & qiBlockIn, qiBlockOut)
+    call initializeCharges(orb, qInput, qOutput)
+    call initializeBlockCharges(orb, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+
+    if(tSccCalc) then
+       if (tReadChrg) then
+          call setInputChargesFromFile(orb, nEl, qInput, qBlockIn, qiBlockIn)
+       elseif (.not. tReadChrg) then
+          call setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
+               & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn)
+       endif
+       
+       call setPackedCharges(qInput, iEqOrbitals, orb, qBlockIn, qiBlockIn, &
+            & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,    &
+            & qInpRed, qOutRed, qDiffRed)
+    endif
     
     ! Initialise images (translations)
     if (tPeriodic) then
@@ -3139,54 +3150,36 @@ contains
        nMixElements = 0
     end if
    
- end subroutine setEquivalencyRelations
+  end subroutine setEquivalencyRelations
 
-
-  !> Initialise partial charges
-  !
-  !  Data used from module:
-  !  nAtom, nSpin, fCharges, deltaRhoIn, referenceN0, iEqBlockOnSite, iEqBlockOnSiteLS,
-  !  iEqBlockDFTBULS and all logicals present
-  !
-  subroutine initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, nMixElements, &
-       & initialSpins, initialCharges, nrChrg, q0, qInput, qOutput, qInpRed, qOutRed, qDiffRed, &
-       & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
-
-    !> Type of the atoms (nAtom)
-    integer, intent(in) :: species0(:)
-    !> Labels of atomic species
-    character(mc), intent(in) :: speciesName(:)
+  
+  subroutine initializeCharges(orb, qInput, qOutput)
+    
     !> Data type for atomic orbitals
     type(TOrbitals), intent(in) :: orb
-    !> Number of electrons
-    real(dp), intent(in) :: nEl(:)
-    !> Orbital equivalence relations
-    integer, intent(in) :: iEqOrbitals(:,:,:)
-    !> nr. of inequivalent orbitals
-    integer, intent(in) :: nIneqOrb
-    !> nr. of elements to go through the mixer
-    !> - may contain reduced orbitals and also orbital blocks          
-    !> (if tDFTBU or onsite corrections)                                           
-    integer, intent(in) :: nMixElements
-    !> Initial spins
-    real(dp), allocatable, intent(in) :: initialSpins(:,:)
-    !> Set of atom-resolved atomic charges 
-    real(dp), allocatable, intent(in) :: initialCharges(:)
-    !> Total charge
-    real(dp), intent(in) :: nrChrg 
+    !> input charges
+    real(dp), intent(inout) :: qInput(:, :, :)
+    !> output charges 
+    real(dp), intent(inout) :: qOutput(:, :, :)
     
-    !> reference neutral atomic occupations
-    real(dp), allocatable, intent(inout) :: q0(:, :, :)
-    !> input charges (for potentials)
-    real(dp), allocatable, intent(inout) :: qInput(:, :, :)
-    !> output charges
-    real(dp), allocatable, intent(inout) :: qOutput(:, :, :)
-    !> input charges packed into unique equivalence elements
-    real(dp), allocatable, intent(inout) :: qInpRed(:)
-    !> output charges packed into unique equivalence elements
-    real(dp), allocatable, intent(inout) :: qOutRed(:)
-    !> charge differences packed into unique equivalence elements
-    real(dp), allocatable, intent(inout) :: qDiffRed(:)
+    if(.not. allocated(qInput)) then
+       allocate(qInput(orb%mOrb, nAtom, nSpin))
+    endif
+    if(.not. allocated(qOutput)) then
+       allocate(qOutput(orb%mOrb, nAtom, nSpin))
+    endif
+    
+    qInput(:,:,:) = 0.0_dp
+    qOutput(:,:,:) = 0.0_dp
+   
+  end subroutine initializeCharges
+
+  
+  !> Initialize input and output block charges 
+  subroutine initializeBlockCharges(orb, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+
+    !> Data type for atomic orbitals
+    type(TOrbitals), intent(in) :: orb
     !> input Mulliken block charges (diagonal part == Mulliken charges)
     real(dp), allocatable, intent(inout) :: qBlockIn(:, :, :, :)
     !> Output Mulliken block charges
@@ -3196,20 +3189,13 @@ contains
     !> Imaginary part of output Mulliken block charges
     real(dp), allocatable, intent(inout) :: qiBlockOut(:, :, :, :)
 
-    integer :: iAt,iSp,iSh,ii,jj,i,j, iStart,iStop,iEnd,iS
-    real(dp) :: rTmp
-    character(lc) :: message 
-    
-    ! Charge arrays may have already been initialised
-    @:ASSERT(size(species0) == nAtom)
-    if(.not. allocated(qInput)) allocate(qInput(orb%mOrb, nAtom, nSpin))
-    if(.not. allocated(qOutput)) allocate(qOutput(orb%mOrb, nAtom, nSpin))
-    qInput(:,:,:) = 0.0_dp
-    qOutput(:,:,:) = 0.0_dp
-
     if (tMixBlockCharges) then
-       if(.not. allocated(qBlockIn)) allocate(qBlockIn(orb%mOrb, orb%mOrb, nAtom, nSpin))
-       if(.not. allocated(qBlockOut))allocate(qBlockOut(orb%mOrb, orb%mOrb, nAtom, nSpin))
+       if(.not. allocated(qBlockIn)) then
+          allocate(qBlockIn(orb%mOrb, orb%mOrb, nAtom, nSpin))
+       endif
+       if(.not. allocated(qBlockOut)) then
+          allocate(qBlockOut(orb%mOrb, orb%mOrb, nAtom, nSpin))
+       endif
        qBlockIn(:,:,:,:) = 0.0_dp
        qBlockOut(:,:,:,:) = 0.0_dp
        if (tImHam) then
@@ -3227,26 +3213,201 @@ contains
        qiBlockOut(:,:,:,:) = 0.0_dp
     end if
     
-    if( .not. tSccCalc) return
+  end subroutine initializeBlockCharges
+  
 
-    ! Charges read from file
-    if (tReadChrg) then
-       if (tFixEf .or. tSkipChrgChecksum) then
-          ! do not check charge or magnetisation from file
-          call initQFromFile(qInput, fCharges, tReadChrgAscii, orb, qBlockIn, qiBlockIn,&
-               & deltaRhoIn)
+  !> Set input charges and block input charges from file
+  !  Data used from module:
+  !  nSpin, fCharges, deltaRhoIn and all logicals present
+  subroutine setInputChargesFromFile(orb, nEl, qInput, qBlockIn, qiBlockIn)
+
+    !> atomic orbitals
+    type(TOrbitals), intent(in) :: orb
+    !> Number of electrons
+    real(dp), intent(in) :: nEl(:)
+
+    !> input charges (for potentials)
+    real(dp), intent(inout) :: qInput(:, :, :)
+    !> input Mulliken block charges (diagonal part == Mulliken charges)
+    real(dp), intent(inout) :: qBlockIn(:, :, :, :)
+    !> Imaginary part of input Mulliken block charges
+    real(dp), allocatable, intent(inout) :: qiBlockIn(:, :, :, :)
+    
+    if (tFixEf .or. tSkipChrgChecksum) then
+       ! do not check charge or magnetisation from file
+       call initQFromFile(qInput, fCharges, tReadChrgAscii, orb, qBlockIn, qiBlockIn,&
+            & deltaRhoIn)
+    else
+       ! check number of electrons in file
+       if (nSpin /= 2) then
+          call initQFromFile(qInput, fCharges, tReadChrgAscii, orb, qBlockIn,&
+               & qiBlockIn, deltaRhoIn, nEl = sum(nEl))
        else
-          ! check number of electrons in file
-          if (nSpin /= 2) then
-             call initQFromFile(qInput, fCharges,tReadChrgAscii, orb, qBlockIn,&
-                  & qiBlockIn, deltaRhoIn,nEl = sum(nEl))
-          else
-             ! check magnetisation in addition
-             call initQFromFile(qInput, fCharges, tReadChrgAscii, orb, qBlockIn,&
-                  & qiBlockIn, deltaRhoIn,nEl = sum(nEl), magnetisation=nEl(1)-nEl(2))
+          ! check magnetisation in addition
+          call initQFromFile(qInput, fCharges, tReadChrgAscii, orb, qBlockIn,&
+               & qiBlockIn, deltaRhoIn, nEl = sum(nEl), magnetisation=nEl(1)-nEl(2))
+       end if
+    end if
+       
+  end subroutine setInputChargesFromFile
+
+
+  !> Set input charges and block input charges 
+  !  Data used from module: nAtom, nSpin, elecTolMax and all logicals 
+  subroutine setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
+       & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn, qSeed)
+
+    !> Type of the atoms (nAtom)
+    integer, intent(in) :: species0(:)
+    !> Labels of atomic species
+    character(mc), intent(in) :: speciesName(:)
+    !> Data type for atomic orbitals
+    type(TOrbitals), intent(in) :: orb
+    !> Number of electrons
+    real(dp), intent(in) :: nEl(:)
+    !> reference n_0 charges for each atom
+    real(dp), allocatable :: referenceN0(:,:)
+    !> Initial spins
+    real(dp), allocatable, intent(in) :: initialSpins(:,:)
+    !> Set of atom-resolved atomic charges 
+    real(dp), allocatable, intent(in) :: initialCharges(:)
+    !> Total charge
+    real(dp), intent(in) :: nrChrg 
+    !> reference neutral atomic occupations
+    real(dp), allocatable, intent(in) :: q0(:, :, :)
+
+    !> input charges (for potentials)
+    real(dp), allocatable, intent(inout) :: qInput(:, :, :)
+    !> input Mulliken block charges (diagonal part == Mulliken charges)
+    real(dp), allocatable, intent(inout) :: qBlockIn(:, :, :, :)
+    !> Imaginary part of input Mulliken block charges
+    real(dp), allocatable, intent(inout) :: qiBlockIn(:, :, :, :)
+    
+    !> input charges from dftb API
+    real(dp), intent(in), optional :: qSeed(:, :, :)
+    
+    integer :: iAt,iSp,iSh,ii,jj,i,j, iStart,iStop,iEnd,iS
+    real(dp) :: rTmp
+    character(lc) :: message 
+
+    if (allocated(initialCharges)) then
+       if (abs(sum(initialCharges) - nrChrg) > elecTolMax) then
+          write(message, "(A,G13.6,A,G13.6,A,A)") "Sum of initial charges does not match specified&
+               & total charge. (", sum(initialCharges), " vs. ", nrChrg, ") ",&
+               & "Your initial charge distribution will be rescaled."
+          call warning(message)
+       end if
+       call initQFromAtomChrg(qInput, initialCharges, referenceN0, species0, speciesName, orb)
+       
+    elseif(present(qSeed))then
+       @:ASSERT(size(qSeed) == size(qInput))
+       qInput = qSeed
+       
+    else
+       qInput = q0
+    end if
+    
+    if (.not. tSkipChrgChecksum) then
+       ! Rescaling to ensure correct number of electrons in the system
+       qInput(:,:,1) = qInput(:,:,1) *  sum(nEl) / sum(qInput(:,:,1))
+    end if
+    
+    select case (nSpin)
+    case (1)
+       continue
+    case (2)
+       if (allocated(initialSpins)) then
+          do ii = 1, nAtom
+             ! does not actually matter if additional spin polarization pushes
+             ! charges to <0 as the initial charges are not mixed in to later
+             ! iterations
+             qInput(1:orb%nOrbAtom(ii),ii,2) = qInput(1:orb%nOrbAtom(ii),ii,1)&
+                  & * initialSpins(1,ii) / sum(qInput(1:orb%nOrbAtom(ii),ii,1))
+          end do
+       else
+          if (.not. tSkipChrgChecksum) then
+             do ii = 1, nAtom
+                qInput(1:orb%nOrbAtom(ii),ii,2) = qInput(1:orb%nOrbAtom(ii),ii,1)&
+                     & * (nEl(1)-nEl(2))/sum(qInput(:,:,1))
+             end do
           end if
        end if
-    endif
+    case (4)
+       if (tSpin) then
+          if (.not. allocated(initialSpins)) then
+             call error("Missing initial spins!")
+          end if
+          if (any(shape(initialSpins)/=(/3,nAtom/))) then
+             call error("Incorrect shape initialSpins array!")
+          end if
+          ! Rescaling to ensure correct number of electrons in the system
+          if (.not. tSkipChrgChecksum) then
+             do ii = 1, nAtom
+                do jj = 1, 3
+                   qInput(1:orb%nOrbAtom(ii),ii,jj+1) = qInput(1:orb%nOrbAtom(ii),ii,1)&
+                        & * initialSpins(jj,ii) / sum(qInput(1:orb%nOrbAtom(ii),ii,1))
+                end do
+             end do
+          end if
+       end if
+    end select
+    
+    if (tMixBlockCharges) then
+       qBlockIn = 0.0_dp
+       do iS = 1, nSpin
+          do iAt = 1, nAtom
+             iSp = species0(iAt)
+             do iSh = 1, orb%nShell(iSp)
+                iStart = orb%posShell(iSh,iSp)
+                iEnd = orb%posShell(iSh+1,iSp)-1
+                rTmp = sum(qInput(iStart:iEnd,iAt,iS))
+                rTmp = rTmp / real(iEnd+1-iStart,dp)
+                do ii = iStart, iEnd
+                   qBlockIn(ii,ii,iAt,iS) = rTmp
+                end do
+             end do
+          end do
+       end do
+       if (tImHam) then
+          qiBlockIn = 0.0_dp
+       end if
+    end if
+    
+  end subroutine setInputCharges
+  
+
+  !> Set packed charges
+  !  Data used from module: nAtom, nSpin and all logicals 
+  subroutine setPackedCharges(qInput, iEqOrbitals, orb, qBlockIn, qiBlockIn, &
+       & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, &
+       & qInpRed, qOutRed, qDiffRed)
+
+    !> input charges (for potentials)
+    !Final result not changed but undergoes two inplace operations if nSpin=2
+    real(dp), intent(inout) :: qInput(:, :, :)
+    !> Orbital equivalence relations
+    integer, intent(in) :: iEqOrbitals(:,:,:)
+    !> Data type for atomic orbitals
+    type(TOrbitals), intent(in) :: orb
+    !> input Mulliken block charges (diagonal part == Mulliken charges)
+    !Final result not changed but undergoes two inplace operations if nSpin=2
+    real(dp), intent(inout) :: qBlockIn(:, :, :, :)
+    !> Imaginary part of input Mulliken block charges
+    real(dp), intent(in) :: qiBlockIn(:, :, :, :)
+    !> Orbital equivalency for orbital blocks
+    integer, intent(in) :: iEqBlockDFTBU(:,:,:,:)
+    !> Equivalences for onsite block corrections if needed
+    integer, intent(in) :: iEqBlockOnSite(:,:,:,:)
+    !> Orbital equivalency for orbital blocks with spin-orbit
+    integer, intent(in) :: iEqBlockDFTBULS(:,:,:,:)
+    !> Equivalences for onsite block corrections if needed with spin orbit
+    integer, intent(in) :: iEqBlockOnSiteLS(:,:,:,:)
+    
+    real(dp), allocatable, intent(inout) :: qInpRed(:)
+    !> output charges packed into unique equivalence elements
+    real(dp), allocatable, intent(inout) :: qOutRed(:)
+    !> charge differences packed into unique equivalence elements
+    real(dp), allocatable, intent(inout) :: qDiffRed(:)
 
     !Input charges packed into unique equivalence elements
   #:for NAME in [('qDiffRed'),('qInpRed'),('qOutRed')]
@@ -3256,92 +3417,7 @@ contains
     ${NAME}$(:) = 0.0_dp
   #:endfor
 
-    ! Charges not read from file
-    notChrgRead: if (.not. tReadChrg) then
-
-      if (allocated(initialCharges)) then
-        if (abs(sum(initialCharges) - nrChrg) > elecTolMax) then
-          write(message, "(A,G13.6,A,G13.6,A,A)") "Sum of initial charges does not match specified&
-              & total charge. (", sum(initialCharges), " vs. ", nrChrg, ") ",&
-              & "Your initial charge distribution will be rescaled."
-          call warning(message)
-        end if
-        call initQFromAtomChrg(qInput, initialCharges, referenceN0, species0, speciesName, orb)
-      else
-        qInput(:,:,:) = q0
-      end if
-
-      if (.not. tSkipChrgChecksum) then
-        ! Rescaling to ensure correct number of electrons in the system
-        qInput(:,:,1) = qInput(:,:,1) *  sum(nEl) / sum(qInput(:,:,1))
-      end if
-
-
-      select case (nSpin)
-      case (1)
-        continue
-      case (2)
-        if (allocated(initialSpins)) then
-          do ii = 1, nAtom
-            ! does not actually matter if additional spin polarization pushes
-            ! charges to <0 as the initial charges are not mixed in to later
-            ! iterations
-            qInput(1:orb%nOrbAtom(ii),ii,2) = qInput(1:orb%nOrbAtom(ii),ii,1)&
-                & * initialSpins(1,ii) / sum(qInput(1:orb%nOrbAtom(ii),ii,1))
-          end do
-        else
-          if (.not. tSkipChrgChecksum) then
-            do ii = 1, nAtom
-              qInput(1:orb%nOrbAtom(ii),ii,2) = qInput(1:orb%nOrbAtom(ii),ii,1)&
-                  & * (nEl(1)-nEl(2))/sum(qInput(:,:,1))
-            end do
-          end if
-        end if
-      case (4)
-        if (tSpin) then
-          if (.not. allocated(initialSpins)) then
-            call error("Missing initial spins!")
-          end if
-          if (any(shape(initialSpins)/=(/3,nAtom/))) then
-            call error("Incorrect shape initialSpins array!")
-          end if
-          ! Rescaling to ensure correct number of electrons in the system
-          if (.not. tSkipChrgChecksum) then
-            do ii = 1, nAtom
-              do jj = 1, 3
-                qInput(1:orb%nOrbAtom(ii),ii,jj+1) = qInput(1:orb%nOrbAtom(ii),ii,1)&
-                    & * initialSpins(jj,ii) / sum(qInput(1:orb%nOrbAtom(ii),ii,1))
-              end do
-            end do
-          end if
-        end if
-      end select
-
-      if (tMixBlockCharges) then
-        qBlockIn = 0.0_dp
-        do iS = 1, nSpin
-          do iAt = 1, nAtom
-            iSp = species0(iAt)
-            do iSh = 1, orb%nShell(iSp)
-              iStart = orb%posShell(iSh,iSp)
-              iEnd = orb%posShell(iSh+1,iSp)-1
-              rTmp = sum(qInput(iStart:iEnd,iAt,iS))
-              rTmp = rTmp / real(iEnd+1-iStart,dp)
-              do ii = iStart, iEnd
-                qBlockIn(ii,ii,iAt,iS) = rTmp
-              end do
-            end do
-          end do
-        end do
-        if (tImHam) then
-          qiBlockIn = 0.0_dp
-        end if
-      end if
-
-    endif notChrgRead
-    ! Closes if (.not. tReadChrg)
-
-    !Swap from charge/magnetisation to up/down
+     !Swap from charge/magnetisation to up/down
     if (nSpin == 2) then
       call qm2ud(qInput)
       if (tMixBlockCharges) then
@@ -3369,13 +3445,13 @@ contains
       if (tMixBlockCharges) call ud2qm(qBlockIn)
     end if
 
-  end subroutine initializeCharges
+  end subroutine initializePackedCharges
 
-  
+ 
   !> Assign reference charge arrays, q0                                                                                      
   !                                                                                                                          
   ! Data available in module: nAtom, nSpin, isLinResp, tMulliken                                                              
-  subroutine initializeReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
+  subroutine setReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
        & customOccFillings, q0)
 
     !> type of the atoms (nAtom)                                                                                             
@@ -3413,7 +3489,7 @@ contains
        end if
     end if
 
-  end subroutine initializeReferenceCharges
+  end subroutine setReferenceCharges
 
   
   !> Set number of electrons                                                                                                 

@@ -530,12 +530,19 @@ contains
     
     call this%checkInit()
     call this%checkSpeciesNames(inputSpeciesNames)
-    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
-    Add if statements
-    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, initialCharges=initialCharges)
-    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, qRef=qRef)
-    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, initialCharges=initialCharges, qRef=qRef)
 
+    if(.not. present(initialCharges) .and. .not. present(qRef)) then
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
+    elseif(present(initialCharges) .and. .not. present(qRef))
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, &
+            initialCharges=initialCharges)
+    elseif(.not. present(initialCharges) .and. present(qRef))
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, qRef=qRef)
+    elseif(present(initialCharges) .and. present(qRef))
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, &
+            initialCharges=initialCharges, qRef=qRef)
+    endif
+    
   end subroutine TDftbPlus_setSpeciesAndDependents
 
 end module dftbp_mmapi

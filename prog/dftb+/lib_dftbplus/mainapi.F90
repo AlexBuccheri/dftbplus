@@ -21,9 +21,9 @@ module dftbp_mainapi
        & q0, qInput, qOutput, qInpRed, qOutRed, referenceN0, qDiffRed, nrChrg, nrSpinPol,         &
        & setEquivalencyRelations, iEqOrbitals, nIneqOrb, nMixElements, onSiteElements, denseDesc, &
        & parallelKS, HSqrCplx, SSqrCplx, eigVecsCplx, HSqrReal, SSqrReal, eigVecsReal, getDenseDescCommon, &
-       & initializeReferenceCharges, setNElectrons, initializeCharges, qBlockIn, qBlockOut,       &
-       & qiBlockIn, qiBlockOut, iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, &
-       & tStress, totalStress
+       & initializeReferenceCharges, setNElectrons, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut,   &
+       & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, tStress, totalStress,  &
+       & initializeCharges, initializeBlockCharges, setInputCharges, setPackedCharges
 #:if WITH_SCALAPACK
   use dftbp_initprogram,  only : getDenseDescBlacs
 #:endif
@@ -256,7 +256,7 @@ contains
   !> When order of atoms changes, update arrays containing atom type indices,
   !> and all subsequent dependencies.
   !  Updated data returned via module use statements
-  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies)
+  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies, qSeed, qRef)
     
     !> dftb+ environment 
     type(TEnvironment),   intent(in) :: env
@@ -284,13 +284,9 @@ contains
          & SSqrReal, eigVecsReal)
 #:endif
     !If atomic order changes, partial charges need to be initialised,                                                   
-    !else wrong charge will be associated with each atom                                                                
-    call initializeReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
-         & customOccFillings, q0)
-    call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
-    call initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, &
-         & nMixElements, initialSpins, initialCharges, nrChrg, q0, qInput, qOutput, &
-         & qInpRed, qOutRed, qDiffRed, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+    !else wrong charge will be associated with each atom
+    call setCharges(  
+   
     
   end subroutine updateDataDependentOnSpeciesOrdering
 
@@ -299,6 +295,43 @@ contains
 !!!  Private routines
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+  subroutine setCharges(   qSeed, qRef)
+
+  
+    if(present(qRef)) then
+       q0 = qRef
+    else
+       call setReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
+            & customOccFillings, q0)
+    endif
+    
+    call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
+    call initializeBlockCharges(orb, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+    
+    if(present(qSeed)) then
+       if(tSccCalc) then
+          call setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
+               & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn, &
+               & qSeed=qSeed)
+       endif
+    else
+       call initializeCharges(orb, qInput, qOuput)
+       if(tSccCalc) then
+          call setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
+               & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn)
+       endif
+    endif
+
+    if(tSccCalc) then
+       call setPackedCharges(qInput, iEqOrbitals, orb, qBlockIn, qiBlockIn, &
+            & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,    &
+            & qInpRed, qOutRed, qDiffRed)
+    endif
+
+
+  end subroutine setCharges
+
+  
   !> Update order of nr. atomic orbitals for each atom, orb%nOrbAtom
   function updateAtomicOrbitals(species0) result(nOrbAtomReordered)
     !> Type of the atoms (nAtom)

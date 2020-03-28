@@ -769,7 +769,7 @@ contains
     if (tSccCalc .and. .not. isXlbomd .and. .not. tConverged) then
       call warning("SCC is NOT converged, maximal SCC iterations exceeded")
       if (tUseConvergedForces) then
-        call env%shutdown()
+         call env%shutdown()
       end if
     end if
 

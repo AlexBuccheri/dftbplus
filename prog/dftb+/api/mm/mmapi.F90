@@ -86,8 +86,6 @@ module dftbp_mmapi
     procedure, private :: checkInit => TDftbPlus_checkInit
   end type TDftbPlus
 
-
-
 contains
 
   !> Returns the root node of the input, so that it can be further processed
@@ -511,7 +509,8 @@ contains
   end subroutine TDftbPlus_checkSpeciesNames
 
   !> Set species and all variables/data dependent on it   
-  subroutine TDftbPlus_setSpeciesAndDependents(this, inputSpeciesNames, inputSpecies)
+  subroutine TDftbPlus_setSpeciesAndDependents(this, inputSpeciesNames, inputSpecies, &
+       & atomic_index)
     !> Instance
     class(TDftbPlus), intent(inout) :: this
     
@@ -520,11 +519,20 @@ contains
     
     !> Labels of atomic species (nSpecies)
     character(len=*), intent(in) :: inputSpeciesNames(:)
+
+    !> Index mapping prior order of atomic indices to current order
+    ! of atomic indices 
+    integer, intent(in), optional :: atomic_index(:)
     
     call this%checkInit()
     call this%checkSpeciesNames(inputSpeciesNames)
-    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
-
+    if(present(atomic_index)) then
+       call updateSpeciesAndSeedCharges(this%env, inputSpecies, &
+            atomic_index)
+    else
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
+    endif
+       
   end subroutine TDftbPlus_setSpeciesAndDependents
 
 end module dftbp_mmapi

@@ -42,7 +42,7 @@ module dftbp_mainapi
   public :: setGeometry, setQDepExtPotProxy, setExternalPotential, setExternalCharges
   public :: getEnergy, getGradients, getExtChargeGradients, getGrossCharges, getStressTensor
   public :: nrOfAtoms
-  public :: updateDataDependentOnSpeciesOrdering, checkSpeciesNames
+  public :: updateDataDependentOnSpeciesOrdering, checkSpeciesNames, updateSpeciesAndSeedCharges
 
 contains
 
@@ -131,10 +131,12 @@ contains
     !> resulting charges
     real(dp), intent(out) :: atomCharges(:)
 
+    @:ASSERT(size(atomCharges) == nAtom)
     atomCharges(:) = sum(q0(:, :, 1) - qOutput(:, :, 1), dim=1)
 
   end subroutine getGrossCharges
 
+  
   !> Sets up an external population independent electrostatic potential.
   !>
   !> Sign convention: charge of electron is considered to be positive.
@@ -252,16 +254,16 @@ contains
 
   end function checkSpeciesNames
 
-
+  
   !> When order of atoms changes, update arrays containing atom type indices,
   !> and all subsequent dependencies.
   !  Updated data returned via module use statements
-  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies)
-    
+  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies) 
     !> dftb+ environment 
     type(TEnvironment),   intent(in) :: env
     !> types of the atoms (nAllAtom) 
     integer,              intent(in) :: inputSpecies(:)
+
     !> Dummy arguments. Won't be used if not allocated
     real(dp), allocatable :: initialCharges(:), initialSpins(:,:)
     type(TWrappedInt1), allocatable :: customOccAtoms(:)
@@ -295,10 +297,93 @@ contains
   end subroutine updateDataDependentOnSpeciesOrdering
 
 
+  !> When order of atoms changes, update arrays containing atom type indices,    
+  !> and all subsequent dependencies. Change in atomic ordering is known and passed
+  !> in as atomic_index
+  subroutine updateSpeciesAndSeedCharges(env, inputSpecies, atomic_index)
+    !> dftb+ environment 
+    type(TEnvironment),   intent(in) :: env
+    !> types of the atoms (nAllAtom) 
+    integer,              intent(in) :: inputSpecies(:)
+    !> index mapping prior order of atomic indices to current order                                                       
+    !> of atomic indices
+    integer,              intent(in) :: atomic_index(:)
+
+    !> Dummy arguments. Won't be used if not allocated                                                                               
+    real(dp), allocatable :: initialCharges(:), initialSpins(:,:)
+    type(TWrappedInt1), allocatable :: customOccAtoms(:)
+    real(dp), allocatable :: customOccFillings(:,:)
+
+    if(size(inputSpecies) /= nAtom)then
+       call error("Number of atoms must be keep constant in simulation")
+    endif
+
+    species0 = inputSpecies
+    mass =  updateAtomicMasses(species0)
+    orb%nOrbAtom = updateAtomicOrbitals(species0)
+
+    call setEquivalencyRelations(species0, sccCalc, orb, onSiteElements, iEqOrbitals, &
+         & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, nIneqOrb, nMixElements)
+#:if WITH_SCALAPACK
+    call updateBLACSDecomposition(env, denseDesc)
+    call reallocateHSArrays(env, denseDesc, HSqrCplx, SSqrCplx, eigVecsCplx, HSqrReal, &
+         & SSqrReal, eigVecsReal)
+#:endif
+    Call seedReferenceAndInputCharges(atomic_index, q0, qInput, qOutput)
+
+    !Split initializeCharges into smaller routines and call appropriate ones
+!!$    call initializeReferenceCharges(species0, referenceN0, orb, customOccAtoms, &
+!!$         & customOccFillings, q0)
+!!$    call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
+!!$    call initializeCharges(species0, speciesName, orb, nEl, iEqOrbitals, nIneqOrb, &
+!!$         & nMixElements, initialSpins, initialCharges, nrChrg, q0, qInput, qOutput, &
+!!$         & qInpRed, qOutRed, qDiffRed, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
+    
+  end subroutine updateSpeciesAndSeedCharges
+
+
+  
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!  Private routines
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+  !> If the ordering of the atoms changes between MD steps
+  !> and the index mapping between the prior and current steps is known
+  !> use reference and output charges from the prior step
+  subroutine seedReferenceAndInputCharges(atomic_index, q0, qInput, qOutput)
+    !> Index mapping prior order of atomic indices to current order  
+    !> of atomic indices   
+    integer, intent(in) :: atomic_index(:)
+    !> Reference neutral atomic occupations                                                              
+    real(dp), intent(inout) :: q0(:, :, :)
+    !> Input charges for current calculation
+    real(dp), intent(inout) :: qInput(:, :, :)
+    !> Output charges from prior calculation
+    real(dp), intent(inout) :: qOutput(:, :, :)
+
+    integer :: ia,ja
+    real(dp), allocatable :: tmp(:, :, :)
+    
+    @:ASSERT(size(atomic_index) == nAtom)
+    @:ASSERT(size(q0,1) == orb%mOrb)
+    @:ASSERT(size(q0,2) == nAtom)
+    @:ASSERT(size(q0,3) == nSpin)
+    @:ASSERT(size(q0) == size(qInput))
+    @:ASSERT(size(q0) == size(qOutput))
+    
+    allocate(tmp(orb%mOrb, nAtom, nSpin))
+    do ia=1,nAtom
+       ja = atomic_index(ia)
+       tmp(:,ja,:) = q0(:,ia,:)
+       qInput(:,ja,:) = qOutput(:,ia,:)
+    enddo
+    q0 = tmp
+    deallocate(tmp)
+    qOutput = 0._dp
+    
+  end subroutine seedReferenceAndInputCharges
+
+  
   !> Update order of nr. atomic orbitals for each atom, orb%nOrbAtom
   function updateAtomicOrbitals(species0) result(nOrbAtomReordered)
     !> Type of the atoms (nAtom)

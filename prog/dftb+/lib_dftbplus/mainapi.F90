@@ -256,47 +256,172 @@ contains
   !> When order of atoms changes, update arrays containing atom type indices,
   !> and all subsequent dependencies.
   !  Updated data returned via module use statements
-  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies, qSeed, qRef)
+  subroutine updateDataDependentOnSpeciesOrdering(env, inputSpecies, atomic_index_map)
     
     !> dftb+ environment 
     type(TEnvironment),   intent(in) :: env
     !> types of the atoms (nAllAtom) 
     integer,              intent(in) :: inputSpecies(:)
-    !> Dummy arguments. Won't be used if not allocated
+    !> Map atomic indices from prior calculation to current calculation 
+    integer, optional,    intent(in) :: atomic_index_map(:)
+
+    !> correctly-ordered reference neutral atomic occupations     
+    real(dp), allocatable :: qRef(:, :, :)
+    !> correctly-ordered input charges   
+    real(dp), allocatable :: qSeed(:, :, :)
+    !> dummy arguments
+    !  Won't be used in routines if not allocated
     real(dp), allocatable :: initialCharges(:), initialSpins(:,:)
     type(TWrappedInt1), allocatable :: customOccAtoms(:)
     real(dp), allocatable :: customOccFillings(:,:)
 
     if(size(inputSpecies) /= nAtom)then
-       call error("Number of atoms must be keep constant in simulation")
+       call error("Number of atoms must be kept constant in simulation")
     endif
     
     species0 = inputSpecies
     mass =  updateAtomicMasses(species0)
     orb%nOrbAtom = updateAtomicOrbitals(species0)
     
-    !Used in partial charge initialisation
+    !Used in charge initialisation
     call setEquivalencyRelations(species0, sccCalc, orb, onSiteElements, iEqOrbitals, &
          & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, nIneqOrb, nMixElements)
+
 #:if WITH_SCALAPACK
     call updateBLACSDecomposition(env, denseDesc)
     call reallocateHSArrays(env, denseDesc, HSqrCplx, SSqrCplx, eigVecsCplx, HSqrReal, &
          & SSqrReal, eigVecsReal)
 #:endif
-    !If atomic order changes, partial charges need to be initialised,                                                   
+
+    !If atomic order changes, charges need to be initialised/reset      
     !else wrong charge will be associated with each atom
-    call setCharges(  
-   
+    if(.not. present(atomic_index_map)) then
+       call setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,                   &
+            & customOccFillings, q0, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, initialCharges,  &
+            & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed, qOutRed, qDiffRed,&
+            & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS)
+    else
+       call seedReferenceAndInputCharges(atomic_index, qSeed, qRef)
+       call setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,                   &
+            & customOccFillings, q0, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, initialCharges,  &
+            & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed, qOutRed, qDiffRed,&
+            & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,                   &
+            & qSeed=qSeed, qRef=qRef)
+    endif
     
   end subroutine updateDataDependentOnSpeciesOrdering
 
-
+  
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!  Private routines
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  subroutine setCharges(   qSeed, qRef)
+  !> If the ordering of the atoms changes between MD steps
+  !> and the index mapping between the prior and current steps is known
+  !> use reorder reference and output charges from the prior step
+  !> for use in the subsequent step
+  subroutine seedReferenceAndInputCharges(atomic_index, qSeed, qRef)
+    !> Index mapping prior order of atomic indices to current order  
+    !> of atomic indices   
+    integer, intent(in) :: atomic_index(:)
+    !> Reference neutral atomic occupations                                                              
+    real(dp), allocatable, intent(out) :: qRef(:, :, :)
+    !> Input charges for current calculation
+    real(dp), allocatable, intent(out) :: qSeed(:, :, :)
 
+    integer :: ia,ja
+    
+    @:ASSERT(size(atomic_index) == nAtom)
+
+    if(.not. allocated(qOutput)) then
+       call error("qOutput not allocated")
+    elseif(.not. allocated(q0)) then
+       call error("q0 not allocated")
+    endif
+    
+    allocate(qRef(orb%mOrb, nAtom, nSpin))
+    allocate(qSeed(orb%mOrb, nAtom, nSpin))
+
+    do ia=1,nAtom
+       ja = atomic_index(ia)
+       qRef(:,ja,:) = q0(:,ia,:)
+       qSeed(:,ja,:) = qOutput(:,ia,:)
+    enddo
+    
+  end subroutine seedReferenceAndInputCharges
+
+  
+  !> Set all charges
+  !> Input, reference, block and reduced/packed charges.
+  !> Initialise/zero corresponding outputs
+  !
+  !  Although in scope the declarations are made explicit
+  !  so developers know how arguments are used/modified. 
+  !  Logicals in scope of module.
+  !  One could reduce number of arguments by creating types for:
+  !  iEqs, qBlocks, and qReds
+  !
+  subroutine setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,             &
+       & customOccFillings, q0, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, initialCharges,  &
+       & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed, qOutRed, qDiffRed,&
+       & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, qSeed, qRef)
+
+    !> Type of the atoms (nAtom)
+    integer, intent(in) :: species0(:)
+    !> Labels of atomic species
+    character(mc), intent(in) :: speciesName(:)
+    !> reference n_0 charges for each atom
+    real(dp), intent(in) :: referenceN0(:,:)
+    !> Data type for atomic orbitals
+    type(TOrbitals), intent(in) :: orb
+    !> Total charge
+    real(dp), intent(in) :: nrChrg
+    !> Spin polarisation
+    real(dp) :: nrSpinPol
+    !> Orbital equivalence relations
+    integer, intent(in) :: iEqOrbitals(:,:,:)
+    !> Orbital equivalency for orbital blocks
+    integer, intent(in) :: iEqBlockDFTBU(:,:,:,:)
+    !> Equivalences for onsite block corrections if needed
+    integer, intent(in) :: iEqBlockOnSite(:,:,:,:)
+    !> Orbital equivalency for orbital blocks with spin-orbit
+    integer, intent(in) :: iEqBlockDFTBULS(:,:,:,:)
+    !> Equivalences for onsite block corrections if needed with spin orbit
+    integer, intent(in) :: iEqBlockOnSiteLS(:,:,:,:)
+    !> Set of atom-resolved atomic charges                                                                   
+    real(dp), allocatable, intent(in) :: initialCharges(:)
+    !> Initial spins  
+    real(dp), allocatable, intent(in) :: initialSpins(:,:)
+    !> Array of occupation arrays, one for each atom
+    type(TWrappedInt1), allocatable, intent(in) :: customOccAtoms(:)
+    !> User-defined reference atomic shell charges 
+    real(dp), allocatable, intent(in) :: customOccFillings(:,:)
+ 
+    !> reference neutral atomic occupations
+    real(dp), allocatable, intent(inout) :: q0(:, :, :)
+    !> Number of electrons
+    real(dp), intent(inout) :: nEl(:)
+    !> Nr. of all electrons if neutral
+    real(dp), intent(inout) :: nEl0
+    !> input Mulliken block charges (diagonal part == Mulliken charges)
+    real(dp), allocatable, intent(inout) :: qBlockIn(:, :, :, :)
+    !> Output Mulliken block charges
+    real(dp), allocatable, intent(inout) :: qBlockOut(:, :, :, :)
+    !> Imaginary part of input Mulliken block charges
+    real(dp), allocatable, intent(inout) :: qiBlockIn(:, :, :, :)
+    !> Imaginary part of output Mulliken block charges
+    real(dp), allocatable, intent(inout) :: qiBlockOut(:, :, :, :)
+    !> input charges packed into unique equivalence elements
+    real(dp), allocatable, intent(inout) :: qInpRed(:)
+    !> output charges packed into unique equivalence elements
+    real(dp), allocatable, intent(inout) :: qOutRed(:)
+    !> charge differences packed into unique equivalence elements
+    real(dp), allocatable, intent(inout) :: qDiffRed(:)
+       
+    !> Input reference neutral atomic occupations 
+    real(dp), intent(in), optional :: qRef(:, :, :)
+    !> Input charges for current calculation  
+    real(dp), intent(in), optional :: qSeed(:, :, :)
   
     if(present(qRef)) then
        q0 = qRef
@@ -306,28 +431,25 @@ contains
     endif
     
     call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
+    call initializeCharges(orb, qInput, qOuput)
     call initializeBlockCharges(orb, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
-    
-    if(present(qSeed)) then
-       if(tSccCalc) then
+
+    if(tSccCalc) then
+       !initQFromFile ignored here as do not want IO 
+       if(present(qSeed)) then
+          ! qSeed used to initialise qInput
           call setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
                & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn, &
                & qSeed=qSeed)
-       endif
-    else
-       call initializeCharges(orb, qInput, qOuput)
-       if(tSccCalc) then
+       else
           call setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
-               & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn)
+               & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn)  
        endif
-    endif
 
-    if(tSccCalc) then
        call setPackedCharges(qInput, iEqOrbitals, orb, qBlockIn, qiBlockIn, &
             & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,    &
             & qInpRed, qOutRed, qDiffRed)
     endif
-
 
   end subroutine setCharges
 

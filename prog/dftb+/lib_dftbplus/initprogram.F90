@@ -2250,7 +2250,8 @@ contains
           call setInputChargesFromFile(orb, nEl, qInput, qBlockIn, qiBlockIn)
        elseif (.not. tReadChrg) then
           call setInputCharges(species0, speciesName, orb, nEl, referenceN0, &
-               & initialSpins, initialCharges, nrChrg, q0, qInput, qBlockIn, qiBlockIn)
+               & input%ctrl%initialSpins, input%ctrl%initialCharges, nrChrg, &
+               & q0, qInput, qBlockIn, qiBlockIn)
        endif
        
        call setPackedCharges(qInput, iEqOrbitals, orb, qBlockIn, qiBlockIn, &
@@ -3461,7 +3462,7 @@ contains
     !> Data type for atomic orbitals                                                                                         
     type(TOrbitals), intent(in) :: orb 
     !> Atom indices corresponding to user defined reference atomic charges                                                   
-    !  Array of occupation arrays, one for each atom                                                                         
+    !>  Array of occupation arrays, one for each atom                                                                         
     type(TWrappedInt1), allocatable, intent(in) :: customOccAtoms(:)
     !> User-defined reference atomic shell charges                                                                           
     real(dp), allocatable, intent(in) :: customOccFillings(:,:)

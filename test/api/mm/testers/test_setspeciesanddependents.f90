@@ -41,7 +41,7 @@ program test_setSpeciesAndDependents
   
   !> DFTB Objects
   type(TDftbPlus)      :: dftb
-  type(TDftbPlusInput) :: hsd_tree, input
+  type(TDftbPlusInput) :: hsd_tree
   Character(len=11), parameter :: dftb_fname = 'dftb_in.hsd'
 
   !> Type for containing geometrical information
@@ -77,7 +77,7 @@ program test_setSpeciesAndDependents
 
   type(MDstatus_type):: MDstatus
   type(TGeometry)    :: geo
-  integer            :: imd, ia
+  integer            :: imd
   real(dp)           :: merminEnergy
   character(len=2)   :: imd_lab
   character(len=100) :: fname
@@ -155,7 +155,7 @@ contains
     !> DFTB+ input file name 
     Character(Len=100) :: fname
     !> Pointers to the parts of the input tree that will be set                                
-    Type(fnode), Pointer :: pRoot, pGeo, pOptions, pParserOpts, pDftb, pKpoints, pAnalysis
+    Type(fnode), Pointer :: pRoot, pGeo, pAnalysis
     !> "Does geometry already exist in DTFB+ input?" (== "replace geometry in HSD tree?") 
     Logical  :: replace_geometry
       

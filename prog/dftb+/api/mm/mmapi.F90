@@ -511,7 +511,8 @@ contains
   end subroutine TDftbPlus_checkSpeciesNames
 
   !> Set species and all variables/data dependent on it   
-  subroutine TDftbPlus_setSpeciesAndDependents(this, inputSpeciesNames, inputSpecies)
+  subroutine TDftbPlus_setSpeciesAndDependents(this, inputSpeciesNames, &
+       inputSpecies, atomic_index_map)
     !> Instance
     class(TDftbPlus), intent(inout) :: this
     
@@ -520,11 +521,20 @@ contains
     
     !> Labels of atomic species (nSpecies)
     character(len=*), intent(in) :: inputSpeciesNames(:)
+
+    !> Index mapping the prior order of atomic indices to current order
+    !> of atomic indices. Pass if one wants to seed qInput with qOutput
+    integer, intent(in), optional :: atomic_index_map(:)
     
     call this%checkInit()
     call this%checkSpeciesNames(inputSpeciesNames)
-    call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
-
+    if(present(atomic_index_map))then
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies, &
+            atomic_index_map=atomic_index_map)
+    else
+       call updateDataDependentOnSpeciesOrdering(this%env, inputSpecies)
+    endif
+    
   end subroutine TDftbPlus_setSpeciesAndDependents
 
 end module dftbp_mmapi

@@ -3159,9 +3159,9 @@ contains
     !> Data type for atomic orbitals
     type(TOrbitals), intent(in) :: orb
     !> input charges
-    real(dp), intent(inout) :: qInput(:, :, :)
+    real(dp), allocatable, intent(inout) :: qInput(:, :, :)
     !> output charges 
-    real(dp), intent(inout) :: qOutput(:, :, :)
+    real(dp), allocatable, intent(inout) :: qOutput(:, :, :)
     
     if(.not. allocated(qInput)) then
        allocate(qInput(orb%mOrb, nAtom, nSpin))
@@ -3230,7 +3230,7 @@ contains
     !> input charges (for potentials)
     real(dp), intent(inout) :: qInput(:, :, :)
     !> input Mulliken block charges (diagonal part == Mulliken charges)
-    real(dp), intent(inout) :: qBlockIn(:, :, :, :)
+    real(dp), allocatable, intent(inout) :: qBlockIn(:, :, :, :)
     !> Imaginary part of input Mulliken block charges
     real(dp), allocatable, intent(inout) :: qiBlockIn(:, :, :, :)
     
@@ -3446,7 +3446,7 @@ contains
       if (tMixBlockCharges) call ud2qm(qBlockIn)
     end if
 
-  end subroutine initializePackedCharges
+  end subroutine setPackedCharges
 
  
   !> Assign reference charge arrays, q0                                                                                      

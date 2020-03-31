@@ -21,7 +21,7 @@ module dftbp_mainapi
        & q0, qInput, qOutput, qInpRed, qOutRed, referenceN0, qDiffRed, nrChrg, nrSpinPol,         &
        & setEquivalencyRelations, iEqOrbitals, nIneqOrb, nMixElements, onSiteElements, denseDesc, &
        & parallelKS, HSqrCplx, SSqrCplx, eigVecsCplx, HSqrReal, SSqrReal, eigVecsReal, getDenseDescCommon, &
-       & initializeReferenceCharges, setNElectrons, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut,   &
+       & setReferenceCharges, setNElectrons, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut,   &
        & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, tStress, totalStress,  &
        & initializeCharges, initializeBlockCharges, setInputCharges, setPackedCharges
 #:if WITH_SCALAPACK
@@ -296,16 +296,18 @@ contains
     !If atomic order changes, charges need to be initialised/reset      
     !else wrong charge will be associated with each atom
     if(.not. present(atomic_index_map)) then
-       call setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,                   &
-            & customOccFillings, q0, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, initialCharges,  &
-            & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed, qOutRed, qDiffRed,&
-            & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS)
+       call setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,             &
+            & customOccFillings, q0, qInput, qOutput, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, &
+            & initialCharges, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed,   &
+            & qOutRed, qDiffRed, iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,&
+            & qSeed, qRef)
+       
     else
-       call seedReferenceAndInputCharges(atomic_index, qSeed, qRef)
-       call setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,                   &
-            & customOccFillings, q0, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, initialCharges,  &
-            & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed, qOutRed, qDiffRed,&
-            & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,                   &
+       call seedReferenceAndInputCharges(atomic_index_map, qSeed, qRef)
+       call setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,             &
+            & customOccFillings, q0, qInput, qOutput, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, &
+            & initialCharges, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed,   &
+            & qOutRed, qDiffRed, iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,&
             & qSeed=qSeed, qRef=qRef)
     endif
     
@@ -320,10 +322,10 @@ contains
   !> and the index mapping between the prior and current steps is known
   !> use reorder reference and output charges from the prior step
   !> for use in the subsequent step
-  subroutine seedReferenceAndInputCharges(atomic_index, qSeed, qRef)
+  subroutine seedReferenceAndInputCharges(atomic_index_map, qSeed, qRef)
     !> Index mapping prior order of atomic indices to current order  
     !> of atomic indices   
-    integer, intent(in) :: atomic_index(:)
+    integer, intent(in) :: atomic_index_map(:)
     !> Reference neutral atomic occupations                                                              
     real(dp), allocatable, intent(out) :: qRef(:, :, :)
     !> Input charges for current calculation
@@ -331,7 +333,7 @@ contains
 
     integer :: ia,ja
     
-    @:ASSERT(size(atomic_index) == nAtom)
+    @:ASSERT(size(atomic_index_map) == nAtom)
 
     if(.not. allocated(qOutput)) then
        call error("qOutput not allocated")
@@ -343,7 +345,7 @@ contains
     allocate(qSeed(orb%mOrb, nAtom, nSpin))
 
     do ia=1,nAtom
-       ja = atomic_index(ia)
+       ja = atomic_index_map(ia)
        qRef(:,ja,:) = q0(:,ia,:)
        qSeed(:,ja,:) = qOutput(:,ia,:)
     enddo
@@ -362,16 +364,17 @@ contains
   !  iEqs, qBlocks, and qReds
   !
   subroutine setCharges(species0, speciesName, referenceN0, orb, customOccAtoms,             &
-       & customOccFillings, q0, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, initialCharges,  &
-       & qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed, qOutRed, qDiffRed,&
-       & iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS, qSeed, qRef)
+       & customOccFillings, q0, qInput, qOutput, nrChrg, nrSpinPol, nEl, nEl0, initialSpins, &
+       & initialCharges, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut, iEqOrbitals, qInpRed,   &
+       & qOutRed, qDiffRed, iEqBlockDFTBU, iEqBlockOnSite, iEqBlockDFTBULS, iEqBlockOnSiteLS,&
+       & qSeed, qRef)
 
     !> Type of the atoms (nAtom)
     integer, intent(in) :: species0(:)
     !> Labels of atomic species
     character(mc), intent(in) :: speciesName(:)
     !> reference n_0 charges for each atom
-    real(dp), intent(in) :: referenceN0(:,:)
+    real(dp), allocatable, intent(in) :: referenceN0(:,:)
     !> Data type for atomic orbitals
     type(TOrbitals), intent(in) :: orb
     !> Total charge
@@ -399,6 +402,10 @@ contains
  
     !> reference neutral atomic occupations
     real(dp), allocatable, intent(inout) :: q0(:, :, :)
+    !> input charges (for potentials) 
+    real(dp), allocatable, intent(inout) :: qInput(:, :, :)
+    !> output charges
+    real(dp), allocatable, intent(inout) :: qOutput(:, :, :)
     !> Number of electrons
     real(dp), intent(inout) :: nEl(:)
     !> Nr. of all electrons if neutral
@@ -431,7 +438,7 @@ contains
     endif
     
     call setNElectrons(q0, nrChrg, nrSpinPol, nEl, nEl0)
-    call initializeCharges(orb, qInput, qOuput)
+    call initializeCharges(orb, qInput, qOutput)
     call initializeBlockCharges(orb, qBlockIn, qBlockOut, qiBlockIn, qiBlockOut)
 
     if(tSccCalc) then

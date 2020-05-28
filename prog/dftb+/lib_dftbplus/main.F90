@@ -767,10 +767,11 @@ contains
     end if
 
     if (tSccCalc .and. .not. isXlbomd .and. .not. tConverged) then
-      call warning("SCC is NOT converged, maximal SCC iterations exceeded")
-      if (tUseConvergedForces) then
-        call env%shutdown()
-      end if
+       call warning("SCC is NOT converged, maximal SCC iterations exceeded")
+       !TODO(Alex) Commented out so env isn't killed if user sets MaxSCCIterations
+!!$      if (tUseConvergedForces) then
+!!$        call env%shutdown()
+!!$      end if
     end if
 
     if (tSccCalc .and. allocated(esp) .and. (.not. (isGeoOpt .or. tMD) .or. &
